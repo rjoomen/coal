@@ -42,9 +42,15 @@
 // #include "coal/data_types.h"
 #include "coal/shape/geometric_shapes.h"
 #include "coal/broadphase/broadphase_dynamic_AABB_tree.h"
+#include "coal/broadphase/broadphase_bruteforce.h"
+#include "coal/collision.h"
 
+#include <algorithm>
 #include <iostream>
 #include <memory>
+#include <set>
+#include <utility>
+#include <vector>
 
 using namespace coal;
 
@@ -140,4 +146,127 @@ BOOST_AUTO_TEST_CASE(DynamicAABBTreeCollisionManager_class) {
     dynamic_tree.update();
     dynamic_tree.distance(&callback);
   }
+}
+
+// Records, in a canonical order, every pair of objects a manager hands to the
+// callback that the narrow phase confirms to be in collision. Two managers over
+// the same scene must produce identical sets.
+struct CollidingPairRecorder : CollisionCallBackBase {
+  explicit CollidingPairRecorder(const std::vector<CollisionObject*>& objects)
+      : objects(objects) {}
+
+  bool collide(CollisionObject* o1, CollisionObject* o2) {
+    CollisionRequest request;
+    CollisionResult result;
+    coal::collide(o1, o2, request, result);
+    if (result.isCollision()) pairs.insert(std::minmax(index(o1), index(o2)));
+    return false;
+  }
+
+  size_t index(const CollisionObject* o) const {
+    const auto it = std::find(objects.begin(), objects.end(), o);
+    BOOST_REQUIRE(it != objects.end());
+    return static_cast<size_t>(it - objects.begin());
+  }
+
+  const std::vector<CollisionObject*>& objects;
+  std::set<std::pair<size_t, size_t>> pairs;
+};
+
+// The scene built below starts with `num_halfspaces` halfspaces, followed by
+// planes up to `num_planar_shapes`, then bounded convex shapes.
+static const size_t num_halfspaces = 3;
+static const size_t num_planar_shapes = 6;
+
+// Builds a scene of halfspaces and planes in three orientations, plus a grid of
+// bounded convex shapes laid out to straddle and to clear them. No shape is
+// exactly tangent to a halfspace or a plane: the broad-phase cull rejects a
+// support point lying exactly on the surface, while the narrow phase reports a
+// zero-distance contact as a collision, so a tangent placement would make the
+// two disagree for reasons unrelated to the traversal.
+static std::vector<std::shared_ptr<CollisionObject>> makePlanarScene() {
+  std::vector<std::shared_ptr<CollisionObject>> objects;
+
+  for (size_t axis = 0; axis < num_halfspaces; ++axis) {
+    Vec3s normal = Vec3s::Zero();
+    normal[static_cast<Eigen::Index>(axis)] = 1;
+    objects.push_back(std::make_shared<CollisionObject>(
+        make_shared<Halfspace>(normal, Scalar(-0.53))));
+  }
+  for (size_t axis = 0; axis < num_planar_shapes - num_halfspaces; ++axis) {
+    Vec3s normal = Vec3s::Zero();
+    normal[static_cast<Eigen::Index>(axis)] = 1;
+    objects.push_back(std::make_shared<CollisionObject>(
+        make_shared<Plane>(normal, Scalar(0.37))));
+  }
+  BOOST_REQUIRE_EQUAL(objects.size(), num_planar_shapes);
+
+  int count = 0;
+  for (int ix = -3; ix <= 3; ++ix) {
+    for (int iy = -2; iy <= 2; ++iy) {
+      CollisionGeometryPtr_t geometry;
+      switch (count % 3) {
+        case 0:
+          geometry = make_shared<Box>(Scalar(0.4), Scalar(0.4), Scalar(0.4));
+          break;
+        case 1:
+          geometry = make_shared<Sphere>(Scalar(0.25));
+          break;
+        default:
+          geometry = make_shared<Capsule>(Scalar(0.15), Scalar(0.5));
+          break;
+      }
+      Transform3s tf = Transform3s::Identity();
+      tf.setTranslation(
+          Vec3s(Scalar(0.5) * ix, Scalar(0.5) * iy, Scalar(0.3) * count));
+      objects.push_back(std::make_shared<CollisionObject>(geometry, tf));
+      ++count;
+    }
+  }
+  return objects;
+}
+
+// The dynamic tree culls a halfspace or a plane against the other object using
+// the geometry itself rather than its unbounded AABB, and skips the broad phase
+// entirely when both objects are planar. Neither shortcut may drop a collision
+// the naive manager reports.
+BOOST_AUTO_TEST_CASE(DynamicAABBTreeCollisionManager_halfspace_and_plane) {
+  const std::vector<std::shared_ptr<CollisionObject>> scene = makePlanarScene();
+  std::vector<CollisionObject*> objects;
+  objects.reserve(scene.size());
+  for (const auto& object : scene) objects.push_back(object.get());
+
+  DynamicAABBTreeCollisionManager dynamic_tree;
+  dynamic_tree.registerObjects(objects);
+  dynamic_tree.setup();
+
+  NaiveCollisionManager naive;
+  naive.registerObjects(objects);
+  naive.setup();
+
+  CollidingPairRecorder from_tree(objects);
+  dynamic_tree.collide(&from_tree);
+  CollidingPairRecorder from_naive(objects);
+  naive.collide(&from_naive);
+
+  BOOST_CHECK_EQUAL(from_tree.pairs.size(), from_naive.pairs.size());
+  BOOST_CHECK(from_tree.pairs == from_naive.pairs);
+
+  // Guard the scene itself: every shortcut must actually be reached, or the
+  // comparison above passes without covering any of them.
+  size_t planar_planar = 0;
+  size_t halfspace_convex = 0;
+  size_t plane_convex = 0;
+  for (const auto& pair : from_tree.pairs) {
+    if (pair.first >= num_planar_shapes) continue;
+    if (pair.second < num_planar_shapes)
+      ++planar_planar;
+    else if (pair.first < num_halfspaces)
+      ++halfspace_convex;
+    else
+      ++plane_convex;
+  }
+  BOOST_CHECK_GT(planar_planar, size_t(0));
+  BOOST_CHECK_GT(halfspace_convex, size_t(0));
+  BOOST_CHECK_GT(plane_convex, size_t(0));
 }
