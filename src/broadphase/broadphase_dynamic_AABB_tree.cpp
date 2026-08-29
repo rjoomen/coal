@@ -251,18 +251,24 @@ bool distanceRecurse(DynamicAABBTreeCollisionManager::DynamicAABBNode* root1,
 //==============================================================================
 bool leafCollide(CollisionObject* o1, CollisionObject* o2,
                  CollisionCallBackBase* callback) {
-  if ((o1->getNodeType() == GEOM_HALFSPACE ||
-       o1->getNodeType() == GEOM_PLANE) &&
-      (o2->getNodeType() == GEOM_HALFSPACE ||
-       o2->getNodeType() == GEOM_PLANE)) {
+  // getNodeType() dispatches virtually to the collision geometry; the type is
+  // fixed for the lifetime of the object, so read each once per pair.
+  const NODE_TYPE node_type1 = o1->getNodeType();
+  const NODE_TYPE node_type2 = o2->getNodeType();
+  const bool o1_is_planar =
+      node_type1 == GEOM_HALFSPACE || node_type1 == GEOM_PLANE;
+  const bool o2_is_planar =
+      node_type2 == GEOM_HALFSPACE || node_type2 == GEOM_PLANE;
+
+  if (o1_is_planar && o2_is_planar) {
     // Halfspace-plane / Halfspace-plane collision, there is no need to check
     // AABBs. We can directly use the callback.
     return (*callback)(o1, o2);
   }
 
   bool overlap = false;
-  if (o1->getNodeType() == GEOM_HALFSPACE || o1->getNodeType() == GEOM_PLANE) {
-    if (o1->getNodeType() == GEOM_HALFSPACE) {
+  if (o1_is_planar) {
+    if (node_type1 == GEOM_HALFSPACE) {
       const auto& halfspace =
           static_cast<const Halfspace&>(*(o1->collisionGeometryPtr()));
       overlap = o2->getAABB().overlap(transform(halfspace, o1->getTransform()));
@@ -272,9 +278,8 @@ bool leafCollide(CollisionObject* o1, CollisionObject* o2,
       overlap = o2->getAABB().overlap(transform(plane, o1->getTransform()));
     }
   }  //
-  else if (o2->getNodeType() == GEOM_HALFSPACE ||
-           o2->getNodeType() == GEOM_PLANE) {
-    if (o2->getNodeType() == GEOM_HALFSPACE) {
+  else if (o2_is_planar) {
+    if (node_type2 == GEOM_HALFSPACE) {
       const auto& halfspace =
           static_cast<const Halfspace&>(*(o2->collisionGeometryPtr()));
       overlap = o1->getAABB().overlap(transform(halfspace, o2->getTransform()));
