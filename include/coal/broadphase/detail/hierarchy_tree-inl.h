@@ -199,7 +199,7 @@ template <typename BV>
 size_t HierarchyTree<BV>::getMaxDepth() const {
   if (!root_node) return 0;
 
-  size_t max_depth;
+  size_t max_depth = 0;
   getMaxDepth(root_node, 0, max_depth);
   return max_depth;
 }

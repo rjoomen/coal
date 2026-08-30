@@ -329,7 +329,7 @@ template <typename BV>
 size_t HierarchyTree<BV>::getMaxDepth() const {
   if (root_node == NULL_NODE) return 0;
 
-  size_t max_depth;
+  size_t max_depth = 0;
   getMaxDepth(root_node, 0, max_depth);
   return max_depth;
 }
@@ -466,7 +466,7 @@ void HierarchyTree<BV>::getMaxDepth(size_t node, size_t depth,
                                     size_t& max_depth) const {
   if (!nodes[node].isLeaf()) {
     getMaxDepth(nodes[node].children[0], depth + 1, max_depth);
-    getmaxDepth(nodes[node].children[1], depth + 1, max_depth);
+    getMaxDepth(nodes[node].children[1], depth + 1, max_depth);
   } else
     max_depth = std::max(max_depth, depth);
 }

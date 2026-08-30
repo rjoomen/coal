@@ -43,6 +43,8 @@
 #include "coal/shape/geometric_shapes.h"
 #include "coal/broadphase/broadphase_dynamic_AABB_tree.h"
 #include "coal/broadphase/broadphase_bruteforce.h"
+#include "coal/broadphase/detail/hierarchy_tree.h"
+#include "coal/broadphase/detail/hierarchy_tree_array.h"
 #include "coal/collision.h"
 
 #include <algorithm>
@@ -269,4 +271,34 @@ BOOST_AUTO_TEST_CASE(DynamicAABBTreeCollisionManager_halfspace_and_plane) {
   BOOST_CHECK_GT(planar_planar, size_t(0));
   BOOST_CHECK_GT(halfspace_convex, size_t(0));
   BOOST_CHECK_GT(plane_convex, size_t(0));
+}
+
+// Fills a hierarchy tree with leaves spread along the x axis.
+template <typename Tree>
+static void insertLeaves(Tree& tree, size_t count) {
+  for (size_t i = 0; i < count; ++i) {
+    const Scalar x = static_cast<Scalar>(i);
+    tree.insert(AABB(Vec3s(x, 0, 0), Vec3s(x + Scalar(0.5), 1, 1)), nullptr);
+  }
+}
+
+// getMaxDepth() and getMaxHeight() both measure the longest root-to-leaf path,
+// so they agree on every tree, including the empty one.
+BOOST_AUTO_TEST_CASE(HierarchyTree_max_depth_equals_max_height) {
+  {
+    detail::HierarchyTree<AABB> tree;
+    BOOST_CHECK_EQUAL(tree.getMaxDepth(), tree.getMaxHeight());
+    insertLeaves(tree, 1);
+    BOOST_CHECK_EQUAL(tree.getMaxDepth(), tree.getMaxHeight());
+    insertLeaves(tree, 7);
+    tree.balanceTopdown();
+    BOOST_CHECK_EQUAL(tree.getMaxDepth(), tree.getMaxHeight());
+  }
+  {
+    detail::implementation_array::HierarchyTree<AABB> tree;
+    BOOST_CHECK_EQUAL(tree.getMaxDepth(), tree.getMaxHeight());
+    insertLeaves(tree, 8);
+    tree.balanceTopdown();
+    BOOST_CHECK_EQUAL(tree.getMaxDepth(), tree.getMaxHeight());
+  }
 }
